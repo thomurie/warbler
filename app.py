@@ -5,7 +5,7 @@ from flask_debugtoolbar import DebugToolbarExtension
 from sqlalchemy.exc import IntegrityError
 
 from forms import UserAddForm, LoginForm, MessageForm, EditUserForm
-from models import db, connect_db, User, Message
+from models import Likes, db, connect_db, User, Message
 
 CURR_USER_KEY = "curr_user"
 
@@ -255,6 +255,62 @@ def delete_user():
 
     return redirect("/signup")
 
+##############################################################################
+# Like Routes:
+
+@app.route('/users/add_like/<int:msg_id>', methods=['POST'])
+def add_remove_like(msg_id):
+    """Add a liked post for the currently-logged-in user."""
+
+    if not g.user:
+        flash("Access unauthorized.", "danger")
+        return redirect("/")
+
+    likes = [m.id for m in g.user.likes]
+    liked_msg = Message.query.filter_by(id = msg_id).first()
+    liked_posts = Likes.query.filter_by(user_id = g.user.id).all()
+
+    if liked_msg.user_id == g.user.id:
+        return redirect("/")
+
+    if msg_id in likes:
+        for post in liked_posts:
+            if post.message_id == msg_id:
+                for l in liked_posts:
+                    if l.message_id == msg_id:
+                        db.session.delete(l)
+                        db.session.commit()
+                        return redirect("/")
+    
+    for post in liked_posts:
+        if post.message_id == msg_id:
+            db.session.delete(post)
+            db.session.commit()
+            new_liked_msg = Likes(user_id = g.user.id, message_id = msg_id)
+            db.session.add(new_liked_msg)
+            db.session.commit()
+    
+    g.user.likes.append(liked_msg)
+    db.session.commit()
+
+    return redirect("/")
+
+@app.route('/users/<int:user_id>/likes', methods=['GET'])
+def show_likes(user_id):
+    """Show the liked posts for the currently-logged-in user."""
+
+    if not g.user:
+        flash("Access unauthorized.", "danger")
+        return redirect("/")
+
+    user = User.query.get_or_404(user_id)
+    likes = [m.id for m in g.user.likes]
+
+    return render_template('users/likes.html', user=user, likes = likes)
+
+
+
+
 
 ##############################################################################
 # Messages routes:
@@ -318,18 +374,22 @@ def homepage():
     """
 
     if g.user:
-        messages = (Message
+        following = [f.id for f in g.user.following]
+        all_messages = (Message
                     .query
                     .order_by(Message.timestamp.desc())
                     .limit(100)
                     .all())
+        messages = []
+        for message in list(all_messages):
+            if message.user_id in following or message.user_id == g.user.id:
+                messages.append(message)
+        
+        likes = [m.id for m in g.user.likes]
 
-        return render_template('home.html', messages=messages)
-
-    else:
-        return render_template('home-anon.html')
-
-
+        return render_template('home.html', messages=tuple(messages), likes = likes)
+    
+    return render_template('home-anon.html')
 ##############################################################################
 # Turn off all caching in Flask
 #   (useful for dev; in production, this kind of stuff is typically
