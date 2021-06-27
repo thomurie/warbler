@@ -6,7 +6,10 @@
 
 
 import os
+from typing import Text
 from unittest import TestCase
+
+from werkzeug import test
 
 from models import db, connect_db, Message, User
 
@@ -71,3 +74,76 @@ class MessageViewTestCase(TestCase):
 
             msg = Message.query.one()
             self.assertEqual(msg.text, "Hello")
+
+    def test_delete_message(self):
+        """Can we delete a message?"""
+
+        with self.client as c:
+            with c.session_transaction() as sess:
+                sess[CURR_USER_KEY] = self.testuser.id
+
+            resp1 = c.post("/messages/new", data={"text": "Hello"})
+
+            self.assertEqual(resp1.status_code, 302)
+
+            msg = Message.query.first()
+            
+            self.assertEqual(msg.text, "Hello")
+
+            resp2 = c.post(f"/messages/{msg.id}/delete", follow_redirects = True)
+
+            self.assertIn(b"testuser", resp2.data)
+    
+    def test_logged_out_add_message(self):
+        """When you’re logged out, are you prohibited from adding messages?"""
+        with self.client as c:
+
+            resp = c.post("/messages/new", data={"text": "Hello"}, follow_redirects = True)
+
+            self.assertIn(b"Access unauthorized.", resp.data)
+
+
+    def test_logged_out_delete_message(self):
+        """When you’re logged out, are you prohibited from deleting messages?"""
+        with self.client as c:
+    
+            resp = c.post("/messages/32/delete", follow_redirects = True)
+
+            self.assertIn(b"Access unauthorized.", resp.data)
+    
+    def test_logged_in_add_as_other_user(self):
+        """When you’re logged in, are you prohibiting from adding a message as another user?"""
+        with self.client as c:
+            with c.session_transaction() as sess:
+                sess[CURR_USER_KEY] = 987659999
+
+            resp = c.post("/messages/new", data={"text": "Hello"}, follow_redirects = True)
+
+            self.assertIn(b"Access unauthorized.", resp.data)
+    
+
+    def test_logged_out_delete_other_users_msg(self):
+        """When you’re logged in, are you prohibiting from deleting a message as another user?"""
+
+        usr = User.signup(username= 'bad-user', email='baduser@gmail.com', password="Iambad!", image_url=None)
+        usr.id = 987654
+
+        db.session.add(usr)
+
+        msg = Message(id=1234, text= 'test', user_id =self.testuser.id)
+
+        db.session.add(msg)
+        db.session.commit()
+
+        with self.client as c:
+            with c.session_transaction() as sess:
+                sess[CURR_USER_KEY] = 987654
+
+            resp = c.post("/messages/1234/delete", follow_redirects = True)
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn(b"Access unauthorized.", resp.data)
+
+
+    
+
+
