@@ -6,7 +6,10 @@
 
 
 import os
+from typing import Text
 from unittest import TestCase
+
+from werkzeug import test
 
 from models import db, connect_db, Message, User
 
@@ -20,28 +23,21 @@ os.environ['DATABASE_URL'] = "postgresql:///warbler-test"
 
 # Now we can import app
 
-from flask import g, dologin, 
 from app import app, CURR_USER_KEY
-
-# Create our tables (we do this here, so we only create the tables
-# once for all tests --- in each test, we'll delete the data
-# and create fresh new clean test data
-
-db.create_all()
-
-# Don't have WTForms use CSRF at all, since it's a pain to test
 
 app.config['WTF_CSRF_ENABLED'] = False
 
 
 class MessageViewTestCase(TestCase):
-    """Test views for messages."""
+    """Test views for user pages."""
 
     def setUp(self):
         """Create test client, add sample data."""
 
+        db.drop_all()
+        db.create_all()
+
         User.query.delete()
-        Message.query.delete()
 
         self.client = app.test_client()
 
@@ -49,36 +45,99 @@ class MessageViewTestCase(TestCase):
                                     email="test@test.com",
                                     password="testuser",
                                     image_url=None)
-        
-        self.testuser2 = User.signup(username="testuser2",
-                                    email="test2@test.com",
-                                    password="testuser2",
-                                    image_url=None)
 
         db.session.commit()
 
-    def test_loggedin_see_follow(self):
-        """Can we see followers and following of other users while logged in"""
+    def test_view_user(self):
+        """Can we see the user detail page?"""
 
         with self.client as c:
             with c.session_transaction() as sess:
                 sess[CURR_USER_KEY] = self.testuser.id
 
-                resp = c.get(f"/users/{self.testuser2.id}/following", follow_redirects=True)
-            
-                self.assertEqual(resp.status_code, 200)
 
-                self.assertIn(b"testuser2",resp.data)
+            resp = c.get(f"/users/{self.testuser.id}")
 
-     def test_add_message_logged_ou(self):
-        """Can use add a message logged out?"""
+            self.assertEqual(resp.status_code, 200)
+
+            self.assertIn(b"testuser", resp.data)
+
+    def test_view_others_followers_logged_in(self):
+        """When you’re logged in, can you see the follower pages for any user?"""
+
+        testuser2 = User.signup(username= 'testuser2', email='testuser2@gmail.com', password="1234567", image_url=None)
+        testuser2.id = 222222
+
+        db.session.add(testuser2)
+        db.session.commit()
+
+        with self.client as c:
+            with c.session_transaction() as sess:
+                sess[CURR_USER_KEY] = self.testuser.id
+
+            resp = c.get(f"/users/{testuser2.id}/followers", follow_redirects = True)
+            self.assertEqual(resp.status_code, 200)
+    
+    def test_view_others_following_logged_in(self):
+        """When you’re logged in, can you see the following pages for any user?"""
+
+        testuser2 = User.signup(username= 'testuser2', email='testuser2@gmail.com', password="1234567", image_url=None)
+        testuser2.id = 222222
+
+        db.session.add(testuser2)
+        db.session.commit()
+
+        with self.client as c:
+            with c.session_transaction() as sess:
+                sess[CURR_USER_KEY] = 222222
+
+            resp = c.get(f"/users/{self.testuser.id}/following", follow_redirects = True)
+            self.assertEqual(resp.status_code, 200)
+
+
+    def test_view_others_followers_logged_out(self):
+        """When you’re logged out, are you disallowed from visiting a user’s follower pages?"""
+         
+        testuser2 = User.signup(username= 'testuser2', email='testuser2@gmail.com', password="1234567", image_url=None)
+        testuser2.id = 222222
+
+        db.session.add(testuser2)
+        db.session.commit()
 
         with self.client as c:
 
-            resp = c.post("/messages/new", data={"text": "Hello"}, follow_redirects=True)
-            print(resp)
-
-            # Make sure it redirects
+            resp = c.get(f"/users/{testuser2.id}/followers", follow_redirects = True)
             self.assertEqual(resp.status_code, 200)
+            self.assertIn(b"Access unauthorized.", resp.data)
+    
+    def test_view_others_following_logged_out(self):
+        """When you’re logged out, are you disallowed from visiting a user’s following pages?"""
 
-            self.assertIn(b'Sign up now to get your own personalized timeline!',resp.data)
+        testuser2 = User.signup(username= 'testuser2', email='testuser2@gmail.com', password="1234567", image_url=None)
+        testuser2.id = 222222
+
+        db.session.add(testuser2)
+        db.session.commit()
+
+        with self.client as c:
+
+            resp = c.get(f"/users/{testuser2.id}/following", follow_redirects = True)
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn(b"Access unauthorized.", resp.data)
+
+
+    def test_home_logged_in(self):
+        """When you’re logged out, are you prohibited from deleting messages?"""
+        
+        with self.client as c:
+            with c.session_transaction() as sess:
+                sess[CURR_USER_KEY] = self.testuser.id
+    
+            resp = c.get("/", follow_redirects = True)
+
+            self.assertEqual(resp.status_code, 200) 
+
+            self.assertIn(b"Messages", resp.data)
+            self.assertIn(b"Followers", resp.data)
+            self.assertIn(b"Following", resp.data)
+    
